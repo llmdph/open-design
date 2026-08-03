@@ -427,6 +427,82 @@ fsTest('spawnEnvForAgent gives AMR a discovered OpenCode binary under a minimal 
   }
 });
 
+
+test('resolveAgentExecutable honors process-env CLAUDE_BIN when Settings override is absent', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'od-process-env-bin-'));
+  try {
+    return withEnvSnapshot(['PATH', 'OD_AGENT_HOME', 'CLAUDE_BIN'], () => {
+      const pinned = join(dir, 'claude-pinned');
+      writeFileSync(pinned, '#!/bin/sh\nexit 0\n');
+      chmodSync(pinned, 0o755);
+      process.env.PATH = '';
+      process.env.OD_AGENT_HOME = dir;
+      process.env.CLAUDE_BIN = pinned;
+
+      const resolved = resolveAgentExecutable(
+        minimalAgentDef({ id: 'claude', bin: 'claude' }),
+        {},
+      );
+
+      assert.equal(resolved, pinned);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveAgentExecutable prefers Settings OPENCODE_BIN over process-env OPENCODE_BIN', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'od-settings-over-process-bin-'));
+  try {
+    return withEnvSnapshot(['PATH', 'OD_AGENT_HOME', 'OPENCODE_BIN'], () => {
+      const fromSettings = join(dir, 'opencode-settings');
+      const fromProcess = join(dir, 'opencode-process');
+      writeFileSync(fromSettings, '#!/bin/sh\nexit 0\n');
+      writeFileSync(fromProcess, '#!/bin/sh\nexit 0\n');
+      chmodSync(fromSettings, 0o755);
+      chmodSync(fromProcess, 0o755);
+      process.env.PATH = '';
+      process.env.OD_AGENT_HOME = dir;
+      process.env.OPENCODE_BIN = fromProcess;
+
+      const resolved = resolveAgentExecutable(
+        minimalAgentDef({ id: 'opencode', bin: 'opencode' }),
+        { OPENCODE_BIN: fromSettings },
+      );
+
+      assert.equal(resolved, fromSettings);
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveAgentExecutable searches PLATFORM_TOOLS_DIR bin roots', () => {
+  const root = mkdtempSync(join(tmpdir(), 'od-platform-tools-'));
+  try {
+    return withEnvSnapshot(['PATH', 'OD_AGENT_HOME', 'PLATFORM_TOOLS_DIR', 'CLAUDE_BIN'], () => {
+      const tools = join(root, 'platform-tools');
+      const binDir = join(tools, 'bin');
+      mkdirSync(binDir, { recursive: true });
+      const claude = join(binDir, 'claude');
+      writeFileSync(claude, '#!/bin/sh\nexit 0\n');
+      chmodSync(claude, 0o755);
+      process.env.PATH = '';
+      process.env.OD_AGENT_HOME = join(root, 'empty-home');
+      process.env.PLATFORM_TOOLS_DIR = tools;
+      delete process.env.CLAUDE_BIN;
+
+      const resolved = resolveAgentExecutable(
+        minimalAgentDef({ id: 'claude', bin: 'claude' }),
+      );
+
+      assert.equal(resolved, claude);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('resolveAgentExecutable prefers a configured CODEX_BIN override over PATH resolution', () => {
   const dir = mkdtempSync(join(tmpdir(), 'od-codex-bin-'));
   try {

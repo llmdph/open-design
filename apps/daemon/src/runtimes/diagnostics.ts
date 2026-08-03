@@ -24,7 +24,12 @@ export function buildExecutableDiagnostic(
   configuredEnv: Record<string, string> = {},
 ): AgentDiagnostic {
   const envKey = agentBinEnvKey(def.id);
-  const overrideRaw = envKey ? configuredEnv?.[envKey]?.trim() : '';
+  // Prefer the Settings override when present; otherwise surface a process-env
+  // pin (CLAUDE_BIN / OPENCODE_BIN / …) that the host deployment set but that
+  // no longer points at a real executable after a tools-volume reinstall.
+  const overrideRaw = envKey
+    ? (configuredEnv?.[envKey]?.trim() || process.env[envKey]?.trim() || '')
+    : '';
   if (envKey && overrideRaw) {
     return {
       reason: 'configured-bin-invalid',

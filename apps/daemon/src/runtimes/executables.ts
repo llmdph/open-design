@@ -57,6 +57,32 @@ function resolveDetectionHome(): { home: string; hasOverride: boolean } {
   return { home: homeOverride || homedir(), hasOverride: Boolean(homeOverride) };
 }
 
+// Enterprise / container installs often park shared agent CLIs under
+// PLATFORM_TOOLS_DIR (e.g. /opt/platform-tools/{bin,npm-global/bin}) so the
+// host image can recreate without losing npm packages. GUI and packaged
+// daemons may still inherit a PATH that omits that volume, so treat the env
+// root as a first-class search location — same role as a custom npm prefix.
+function platformToolsBinDirs(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const raw = env.PLATFORM_TOOLS_DIR?.trim();
+  if (!raw) return [];
+  const root = expandHomePath(raw);
+  if (!path.isAbsolute(root)) return [];
+  return [path.join(root, 'bin'), path.join(root, 'npm-global', 'bin')];
+}
+
+// Deployment stacks (Docker Compose, K8s) pin absolute CLI paths via the
+// process environment (`CLAUDE_BIN`, `OPENCODE_BIN`, …). Settings
+// `agentCliEnv` still wins when the user explicitly overrides a path, but
+// without this fallback the daemon ignores the host-provided pins and falls
+// through to PATH shims that may be broken after a volume reinstall.
+function processEnvExecutableOverride(def: RuntimeAgentDef): string | null {
+  const envKey = AGENT_BIN_ENV_KEYS.get(def?.id);
+  if (!envKey) return null;
+  return executableFilePath(process.env[envKey]);
+}
+
 function userToolchainDirs() {
   const { home, hasOverride } = resolveDetectionHome();
   const homeOverride = hasOverride ? home : undefined;
@@ -97,6 +123,7 @@ export function userToolchainBinDirs(): string[] {
 function resolvePathDirs() {
   const seen = new Set();
   const dirs = [
+    ...platformToolsBinDirs(),
     ...(process.env.PATH || '').split(delimiter),
     // GUI launchers (macOS .app bundles, Linux .desktop files) often start
     // with a minimal PATH. Include common user-level CLI install locations
@@ -180,7 +207,8 @@ function configuredExecutableOverride(
 ): string | null {
   const envKey = AGENT_BIN_ENV_KEYS.get(def?.id);
   if (!envKey) return null;
-  return executableFilePath(configuredEnv?.[envKey]);
+  // Settings override first, then process-env pins from the deployment host.
+  return executableFilePath(configuredEnv?.[envKey]) ?? processEnvExecutableOverride(def);
 }
 
 export function resolveAmrOpenCodeExecutable(
